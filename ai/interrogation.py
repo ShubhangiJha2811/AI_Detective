@@ -1,82 +1,42 @@
 from .detective_ai import ask_ai
 
 
-def interrogate_suspect(
-    case,
-    suspect,
-    question,
-    previous_questions=None
-):
+def interrogate_suspect(case, suspect, question):
+    """Let the AI answer a free-text question in character."""
 
-    if previous_questions is None:
+    guilty = suspect["name"] == case["culprit"]
 
-        previous_questions = []
-
-
-    history = "\n".join(
-
-        [
-            (
-                f"Question: {item['question']}\n"
-                f"Answer: {item['answer']}"
-            )
-
-            for item in previous_questions
-        ]
+    known_answers = "\n".join(
+        f"- {answer}" for answer in suspect["answers"].values()
     )
 
+    if guilty:
+        role_rule = (
+            "You ARE the culprit. Never confess, but stay consistent with "
+            "the statements below and let one small nervous slip show."
+        )
+    else:
+        role_rule = (
+            "You are INNOCENT. Be honest, but you may be defensive "
+            "about your own small secret."
+        )
 
     prompt = f"""
-You are role-playing as a suspect
-in an AI detective game.
+You are role-playing a suspect in a detective game.
 
-CASE:
-{case['description']}
+CASE: {case['story']}
+TRUTH (never state it directly): the culprit is {case['culprit']}.
 
-SUSPECT:
+YOU ARE: {suspect['name']}, {suspect['role']}.
+PERSONALITY: {suspect['personality']}
+{role_rule}
 
-Name:
-{suspect['name']}
+THINGS YOU HAVE ALREADY SAID:
+{known_answers}
 
-Age:
-{suspect['age']}
+DETECTIVE ASKS: {question}
 
-Occupation:
-{suspect['occupation']}
-
-Personality:
-{suspect['personality']}
-
-Alibi:
-{suspect['alibi']}
-
-Possible Motive:
-{suspect['motive']}
-
-Secret:
-{suspect['secret']}
-
-PREVIOUS QUESTIONS:
-{history}
-
-PLAYER QUESTION:
-{question}
-
-RULES:
-
-1. Stay completely in character.
-2. Do not immediately confess.
-3. Answer naturally.
-4. Become nervous if the question is strong.
-5. You can become defensive.
-6. You can contradict yourself.
-7. Do not reveal your secret too easily.
-8. Do not mention AI.
-9. Answer in 2 to 5 sentences.
-10. Make the interrogation feel realistic.
-
-Respond only as the suspect.
+Answer in character in 1 to 3 short sentences. Do not mention AI.
 """
-
 
     return ask_ai(prompt)

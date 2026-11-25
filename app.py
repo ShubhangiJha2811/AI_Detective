@@ -1,191 +1,297 @@
 import streamlit as st
 
-
-# Game data
-from game.cases import CASES
-from game.suspects import SUSPECTS
-from game.clues import CLUES
+from game.cases import CASES, QUESTIONS
+from ai.detective_ai import client as ai_client
+from ai.interrogation import interrogate_suspect
 
 
-# Game logic
-from game.game_logic import (
-    create_game_state,
-    add_interrogation,
-    add_clue,
-    finish_game,
-    get_remaining_turns
-)
+MAX_MOVES = 6
+MAX_LIVES = 2
 
 
-# Scoring
-from game.scoring import (
-    calculate_score,
-    get_rank,
-    compare_with_ai
-)
-
-
-# AI
-from ai.interrogation import (
-    interrogate_suspect
-)
-
-from ai.detective_ai import (
-    analyze_case,
-    generate_hint
-)
-
-from ai.judge import (
-    judge_case,
-    reveal_solution
-)
-
-
-# ==================================================
-# PAGE CONFIGURATION
-# ==================================================
-
-st.set_page_config(
-
-    page_title="AI Detective",
-
-    page_icon="🕵️",
-
-    layout="wide"
-)
-
-
-# ==================================================
-# CUSTOM CSS
-# ==================================================
+st.set_page_config(page_title="AI Detective", page_icon="🕵️", layout="wide")
 
 st.markdown(
     """
 <style>
-
-.stApp {
-    background-color: #080b14;
-}
-
-.detective-title {
-
-    font-size: 48px;
-
-    font-weight: 800;
-
-    text-align: center;
-
-    color: #8b5cf6;
-
-    margin-bottom: 5px;
-}
-
-.subtitle {
-
-    text-align: center;
-
-    color: #94a3b8;
-
-    font-size: 18px;
-
-    margin-bottom: 30px;
-}
-
-.case-card {
-
-    padding: 25px;
-
-    border-radius: 15px;
-
-    background-color: #111827;
-
-    border: 1px solid #374151;
-
-    margin-bottom: 20px;
-}
-
-.ai-box {
-
-    padding: 20px;
-
-    border-radius: 15px;
-
-    background-color: #111827;
-
-    border: 1px solid #8b5cf6;
-}
-
-.clue-card {
-
-    padding: 15px;
-
-    border-radius: 12px;
-
-    background-color: #111827;
-
-    border-left: 4px solid #8b5cf6;
-
-    margin-bottom: 12px;
-}
-
+.title {font-size: 46px; font-weight: 800; text-align: center; color: #a78bfa; margin-bottom: 0;}
+.subtitle {text-align: center; color: #94a3b8; font-size: 18px; margin-bottom: 24px;}
+.big {font-size: 22px; text-align: center;}
+.quote {border-left: 3px solid #a78bfa; padding: 4px 12px; margin: 6px 0; color: #e2e8f0;}
 </style>
 """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 
 # ==================================================
-# SESSION STATE
+# STATE
 # ==================================================
 
-if "game" not in st.session_state:
+def start_case(case_name):
+    st.session_state.case_name = case_name
+    st.session_state.moves = MAX_MOVES
+    st.session_state.lives = MAX_LIVES
+    st.session_state.seen_clues = set()
+    st.session_state.answers = {}       # suspect name -> list of (question, answer)
+    st.session_state.asked = set()      # (suspect name, question key)
+    st.session_state.wrong = set()      # wrongly accused suspects
+    st.session_state.message = None
+    st.session_state.result = None      # None, "won" or "lost"
 
-    st.session_state.game = None
 
-
-if "case_name" not in st.session_state:
-
+def go_home():
     st.session_state.case_name = None
 
 
-if "ai_analysis" not in st.session_state:
-
-    st.session_state.ai_analysis = None
-
-
-if "hint" not in st.session_state:
-
-    st.session_state.hint = None
+def examine(index):
+    if st.session_state.moves > 0:
+        st.session_state.seen_clues.add(index)
+        st.session_state.moves -= 1
 
 
-if "last_answer" not in st.session_state:
+def ask(suspect, key):
+    if st.session_state.moves > 0:
+        st.session_state.asked.add((suspect["name"], key))
+        st.session_state.answers.setdefault(suspect["name"], []).append(
+            (QUESTIONS[key], suspect["answers"][key])
+        )
+        st.session_state.moves -= 1
 
-    st.session_state.last_answer = None
+
+def accuse(name, case):
+    if name == case["culprit"]:
+        st.session_state.result = "won"
+        return
+
+    st.session_state.wrong.add(name)
+    st.session_state.lives -= 1
+
+    if st.session_state.lives <= 0:
+        st.session_state.result = "lost"
+    else:
+        st.session_state.message = (
+            f"❌ **{name}** has a solid alibi! You have one accusation left. "
+            "Think carefully..."
+        )
 
 
-if "final_result" not in st.session_state:
+def stars():
+    count = 1
+    if not st.session_state.wrong:
+        count += 1
+    if st.session_state.moves >= 2:
+        count += 1
+    return count
 
-    st.session_state.final_result = None
+
+if "case_name" not in st.session_state:
+    go_home()
+
+
+st.markdown('<div class="title">🕵️ AI DETECTIVE</div>', unsafe_allow_html=True)
 
 
 # ==================================================
-# HEADER
+# HOME SCREEN
 # ==================================================
 
-st.markdown(
-    '<div class="detective-title">'
-    '🕵️ AI DETECTIVE'
-    '</div>',
-    unsafe_allow_html=True
-)
+if st.session_state.case_name is None:
+
+    st.markdown(
+        '<div class="subtitle">Find the culprit before you run out of moves.</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f"""
+<div class="big">
+🔎 Examine evidence &nbsp;·&nbsp; 🎤 Question suspects &nbsp;·&nbsp; 👉 Accuse the culprit
+</div>
+<p style="text-align:center;color:#94a3b8">
+You only get <b>{MAX_MOVES} moves</b> and <b>{MAX_LIVES} accusations</b>.
+Some clues are red herrings. Choose wisely!
+</p>
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.write("")
+
+    columns = st.columns(len(CASES))
+
+    for column, (name, case) in zip(columns, CASES.items()):
+        with column, st.container(border=True):
+            st.markdown(f"<div style='font-size:56px;text-align:center'>{case['emoji']}</div>", unsafe_allow_html=True)
+            st.subheader(name)
+            st.caption(f"Difficulty: {case['difficulty']}")
+            st.write(case["story"])
+            st.button("▶ Play", key=f"play_{name}", type="primary",
+                      width="stretch", on_click=start_case, args=(name,))
+
+    st.stop()
 
 
-st.markdown(
-    '<div class="subtitle">'
-    'Human vs Machine — Can You Solve the Mystery?'
-    '</div>',
-    unsafe_allow_html=True
+# ==================================================
+# GAME SCREEN
+# ==================================================
+
+case_name = st.session_state.case_name
+case = CASES[case_name]
+moves = st.session_state.moves
+playing = st.session_state.result is None
+
+
+# ---------- Header ----------
+
+st.header(f"{case['emoji']} {case_name}")
+st.info(case["story"])
+
+status_left, status_right = st.columns(2)
+status_left.markdown(
+    f"### 🔦 Moves: {'🟣' * moves}{'⚫' * (MAX_MOVES - moves)}"
 )
+status_right.markdown(
+    f"### Accusations: {'❤️' * st.session_state.lives}{'🖤' * (MAX_LIVES - st.session_state.lives)}"
+)
+
+if st.session_state.message and playing:
+    st.warning(st.session_state.message)
+
+
+# ==================================================
+# RESULT
+# ==================================================
+
+if not playing:
+
+    culprit = case["culprit"]
+
+    with st.container(border=True):
+        if st.session_state.result == "won":
+            st.balloons()
+            earned = stars()
+            st.markdown(f"## 🎉 Case solved! It was **{culprit}**.")
+            st.markdown(f"# {'⭐' * earned}{'☆' * (3 - earned)}")
+            st.caption("⭐ Solved  ·  ⭐ No wrong accusations  ·  ⭐ 2+ moves left over")
+        else:
+            st.markdown(f"## 💨 The culprit escaped! It was **{culprit}**.")
+
+        st.markdown(f"<div class='quote'>{case['confession']}</div>", unsafe_allow_html=True)
+
+    names = list(CASES)
+    next_case = names[(names.index(case_name) + 1) % len(names)]
+
+    again, nxt, home = st.columns(3)
+    again.button("🔁 Play again", width="stretch", on_click=start_case, args=(case_name,))
+    nxt.button(f"➡️ Next: {next_case}", type="primary", width="stretch",
+               on_click=start_case, args=(next_case,))
+    home.button("🏠 All cases", width="stretch", on_click=go_home)
+
+    # Show only the result: hide the evidence, suspects and accuse sections.
+    st.stop()
+
+
+# ==================================================
+# EVIDENCE + SUSPECTS
+# ==================================================
+
+out_of_moves = moves <= 0 or not playing
+
+if moves <= 0 and playing:
+    st.error("⏰ Out of moves! Time to make your accusation below.")
+
+evidence_col, suspects_col = st.columns([2, 3], gap="large")
+
+
+with evidence_col:
+    st.subheader("🔎 Evidence")
+    st.caption("Each one costs 1 move.")
+
+    for index, clue in enumerate(case["clues"]):
+        with st.container(border=True):
+            if index in st.session_state.seen_clues or not playing:
+                st.markdown(f"**{clue['icon']} {clue['name']}**")
+                st.markdown(clue["text"])
+            else:
+                st.markdown(f"**❓ {clue['name']}**")
+                st.button("Examine", key=f"clue_{index}", width="stretch",
+                          disabled=out_of_moves, on_click=examine, args=(index,))
+
+
+with suspects_col:
+    st.subheader("🎤 Suspects")
+    st.caption("Each question costs 1 move. Watch for anything that doesn't match the evidence!")
+
+    for suspect in case["suspects"]:
+        name = suspect["name"]
+
+        with st.container(border=True):
+            label = f"#### {suspect['emoji']} {name}"
+            if name in st.session_state.wrong:
+                label += "  ❌"
+            st.markdown(label)
+            st.caption(suspect["role"])
+
+            for question, answer in st.session_state.answers.get(name, []):
+                st.markdown(
+                    f"<div class='quote'><b>{question}</b><br>“{answer}”</div>",
+                    unsafe_allow_html=True,
+                )
+
+            if playing:
+                buttons = st.columns(len(QUESTIONS))
+                for button, (key, question) in zip(buttons, QUESTIONS.items()):
+                    button.button(
+                        question,
+                        key=f"ask_{name}_{key}",
+                        width="stretch",
+                        disabled=out_of_moves or (name, key) in st.session_state.asked,
+                        on_click=ask,
+                        args=(suspect, key),
+                    )
+
+                # Optional: free-text question answered by Gemini.
+                if ai_client is not None and not out_of_moves:
+                    with st.expander("✍️ Ask your own question (AI)"):
+                        with st.form(key=f"form_{name}", clear_on_submit=True, border=False):
+                            custom = st.text_input("Your question", key=f"text_{name}",
+                                                   label_visibility="collapsed",
+                                                   placeholder="e.g. Who else was near the lab?")
+                            sent = st.form_submit_button("Ask (1 move)")
+
+                        if sent and custom.strip():
+                            with st.spinner(f"{name} is thinking..."):
+                                reply = interrogate_suspect(case, suspect, custom.strip())
+                            st.session_state.answers.setdefault(name, []).append(
+                                (f"✍️ {custom.strip()}", reply)
+                            )
+                            st.session_state.moves -= 1
+                            st.rerun()
+
+
+# ==================================================
+# ACCUSE
+# ==================================================
+
+if playing:
+    st.divider()
+    st.subheader("👉 Who did it?")
+    st.caption("Accuse whenever you're ready. You don't need to use all your moves.")
+
+    accuse_buttons = st.columns(len(case["suspects"]))
+
+    for button, suspect in zip(accuse_buttons, case["suspects"]):
+        name = suspect["name"]
+        button.button(
+            f"{suspect['emoji']} {name}",
+            key=f"accuse_{name}",
+            type="primary",
+            width="stretch",
+            disabled=name in st.session_state.wrong,
+            on_click=accuse,
+            args=(name, case),
+        )
 
 
 # ==================================================
@@ -193,832 +299,14 @@ st.markdown(
 # ==================================================
 
 with st.sidebar:
-
-    st.header("🎮 Game Control")
-
-
-    if st.button(
-        "🔄 New Game",
-        use_container_width=True
-    ):
-
-        st.session_state.game = None
-
-        st.session_state.case_name = None
-
-        st.session_state.ai_analysis = None
-
-        st.session_state.hint = None
-
-        st.session_state.last_answer = None
-
-        st.session_state.final_result = None
-
-        st.rerun()
-
-
+    st.button("🏠 All cases", width="stretch", on_click=go_home)
+    st.button("🔁 Restart case", width="stretch", on_click=start_case, args=(case_name,))
     st.divider()
-
-
-    st.subheader("📖 How To Play")
-
+    st.subheader("📖 How to play")
     st.write(
-        """
-        **1.** Select a case.
-
-        **2.** Read the case.
-
-        **3.** Study suspects.
-
-        **4.** Investigate clues.
-
-        **5.** Interrogate suspects.
-
-        **6.** Ask the AI detective.
-
-        **7.** Make your accusation.
-
-        **8.** Beat the AI.
-        """
+        "1. Examine evidence and question suspects (1 move each).\n"
+        "2. Look for a story that doesn't match the evidence.\n"
+        "3. Accuse the culprit. You have 2 tries."
     )
-
-
-    st.divider()
-
-
-    st.caption(
-        "🤖 Powered by Gemini AI"
-    )
-
-
-# ==================================================
-# CASE SELECTION
-# ==================================================
-
-if st.session_state.game is None:
-
-    st.subheader("📂 Select Your Case")
-
-
-    case_names = list(
-        CASES.keys()
-    )
-
-
-    selected_case = st.selectbox(
-
-        "Choose a mystery",
-
-        case_names
-    )
-
-
-    case = CASES[selected_case]
-
-
-    st.markdown(
-
-        f"""
-<div class="case-card">
-
-<h2>🗂️ {case['title']}</h2>
-
-<p>
-<b>Difficulty:</b>
-{case['difficulty']}
-</p>
-
-<p>
-<b>Location:</b>
-{case['location']}
-</p>
-
-<p>
-<b>Victim:</b>
-{case['victim']}
-</p>
-
-<p>
-<b>Time:</b>
-{case['time']}
-</p>
-
-</div>
-""",
-
-        unsafe_allow_html=True
-    )
-
-
-    st.write(
-        case["description"]
-    )
-
-
-    if st.button(
-
-        "🚨 START INVESTIGATION",
-
-        type="primary",
-
-        use_container_width=True
-    ):
-
-        st.session_state.game = (
-            create_game_state(
-                selected_case
-            )
-        )
-
-
-        st.session_state.case_name = (
-            selected_case
-        )
-
-
-        st.rerun()
-
-
-    st.stop()
-
-
-# ==================================================
-# CURRENT GAME
-# ==================================================
-
-game = st.session_state.game
-
-case_name = st.session_state.case_name
-
-case = CASES[case_name]
-
-suspects = SUSPECTS[case_name]
-
-clues = CLUES[case_name]
-
-
-# ==================================================
-# GAME STATISTICS
-# ==================================================
-
-col1, col2, col3, col4 = st.columns(4)
-
-
-with col1:
-
-    st.metric(
-        "⏳ Turns",
-        f"{game['turn']}/{game['max_turns']}"
-    )
-
-
-with col2:
-
-    st.metric(
-        "⭐ Score",
-        game["score"]
-    )
-
-
-with col3:
-
-    st.metric(
-        "🔎 Clues Found",
-        len(game["found_clues"])
-    )
-
-
-with col4:
-
-    st.metric(
-        "💬 Questions",
-        game["question_count"]
-    )
-
-
-st.progress(
-    min(
-        game["turn"] / game["max_turns"],
-        1.0
-    )
-)
-
-
-# ==================================================
-# CASE
-# ==================================================
-
-st.header(
-    f"📂 {case['title']}"
-)
-
-
-with st.expander(
-    "📖 Case Details",
-    expanded=True
-):
-
-    st.write(
-        case["description"]
-    )
-
-
-# ==================================================
-# TABS
-# ==================================================
-
-tab1, tab2, tab3, tab4 = st.tabs(
-
-    [
-        "👥 Suspects",
-        "🔎 Evidence",
-        "🤖 AI Detective",
-        "⚖️ Final Accusation"
-    ]
-)
-
-
-# ==================================================
-# SUSPECTS
-# ==================================================
-
-with tab1:
-
-    st.subheader(
-        "👥 Suspects"
-    )
-
-
-    for suspect in suspects:
-
-        with st.expander(
-            f"🧑 {suspect['name']}"
-        ):
-
-            st.write(
-                f"**Age:** {suspect['age']}"
-            )
-
-            st.write(
-                f"**Occupation:** "
-                f"{suspect['occupation']}"
-            )
-
-            st.write(
-                f"**Personality:** "
-                f"{suspect['personality']}"
-            )
-
-            st.write(
-                f"**Alibi:** "
-                f"{suspect['alibi']}"
-            )
-
-            st.write(
-                f"**Possible Motive:** "
-                f"{suspect['motive']}"
-            )
-
-
-# ==================================================
-# CLUES
-# ==================================================
-
-with tab2:
-
-    st.subheader(
-        "🔎 Evidence Board"
-    )
-
-
-    for clue in clues:
-
-        if clue["id"] in game["found_clues"]:
-
-            st.markdown(
-
-                f"""
-<div class="clue-card">
-
-<h4>🔓 {clue['name']}</h4>
-
-<p>{clue['description']}</p>
-
-<b>Importance:</b>
-{clue['importance']}
-
-</div>
-""",
-
-                unsafe_allow_html=True
-            )
-
-
-        else:
-
-            if st.button(
-
-                f"🔍 Investigate {clue['name']}",
-
-                key=f"clue_{clue['id']}"
-            ):
-
-                add_clue(
-                    game,
-                    clue["id"]
-                )
-
-
-                game["score"] += (
-                    clue["points"]
-                )
-
-
-                st.rerun()
-
-
-# ==================================================
-# AI DETECTIVE
-# ==================================================
-
-with tab3:
-
-    st.subheader(
-        "🤖 AI Detective Assistant"
-    )
-
-
-    st.write(
-        """
-The AI can analyze the evidence and
-help you decide what to investigate next.
-"""
-    )
-
-
-    if st.button(
-        "🧠 Analyze Evidence",
-        use_container_width=True
-    ):
-
-        with st.spinner(
-            "AI is analyzing the case..."
-        ):
-
-            st.session_state.ai_analysis = (
-                analyze_case(
-                    case,
-                    suspects,
-                    clues,
-                    game["interrogations"]
-                )
-            )
-
-
-    if st.session_state.ai_analysis:
-
-        st.markdown(
-            '<div class="ai-box">',
-            unsafe_allow_html=True
-        )
-
-
-        st.markdown(
-            st.session_state.ai_analysis
-        )
-
-
-        st.markdown(
-            "</div>",
-            unsafe_allow_html=True
-        )
-
-
-    st.divider()
-
-
-    if st.button(
-        "💡 Give Me A Hint",
-        use_container_width=True
-    ):
-
-        with st.spinner(
-            "AI is thinking..."
-        ):
-
-            st.session_state.hint = (
-                generate_hint(
-                    case,
-                    suspects,
-                    clues
-                )
-            )
-
-
-    if st.session_state.hint:
-
-        st.info(
-            st.session_state.hint
-        )
-
-
-# ==================================================
-# INTERROGATION
-# ==================================================
-
-st.divider()
-
-st.header(
-    "🎤 Interrogation Room"
-)
-
-
-suspect_names = [
-
-    suspect["name"]
-
-    for suspect in suspects
-]
-
-
-selected_suspect = st.selectbox(
-
-    "Choose a suspect",
-
-    suspect_names
-)
-
-
-question = st.text_area(
-
-    "Ask your question",
-
-    placeholder=(
-        "Example: Where were you at 11:45 PM?"
-    ),
-
-    height=100
-)
-
-
-remaining_turns = (
-    get_remaining_turns(game)
-)
-
-
-st.caption(
-    f"Investigation turns remaining: "
-    f"{remaining_turns}"
-)
-
-
-if st.button(
-    "🎤 INTERROGATE",
-    type="primary"
-):
-
-    if not question.strip():
-
-        st.warning(
-            "Please enter a question."
-        )
-
-
-    elif remaining_turns <= 0:
-
-        st.error(
-            "You have used all your turns."
-        )
-
-
-    else:
-
-        suspect_data = next(
-
-            suspect
-
-            for suspect in suspects
-
-            if suspect["name"]
-            == selected_suspect
-        )
-
-
-        with st.spinner(
-            f"{selected_suspect} is answering..."
-        ):
-
-            answer = interrogate_suspect(
-
-                case,
-
-                suspect_data,
-
-                question,
-
-                game["interrogations"]
-            )
-
-
-        add_interrogation(
-
-            game,
-
-            selected_suspect,
-
-            question,
-
-            answer
-        )
-
-
-        st.session_state.last_answer = {
-
-            "suspect": selected_suspect,
-
-            "question": question,
-
-            "answer": answer
-        }
-
-
-        st.rerun()
-
-
-# ==================================================
-# LAST ANSWER
-# ==================================================
-
-if st.session_state.last_answer:
-
-    answer = (
-        st.session_state.last_answer
-    )
-
-
-    st.subheader(
-        f"🗣️ {answer['suspect']}"
-    )
-
-
-    st.chat_message(
-        "user"
-    ).write(
-        answer["question"]
-    )
-
-
-    st.chat_message(
-        "assistant"
-    ).write(
-        answer["answer"]
-    )
-
-
-# ==================================================
-# INTERROGATION HISTORY
-# ==================================================
-
-if game["interrogations"]:
-
-    with st.expander(
-        "📜 Interrogation History"
-    ):
-
-        for item in game["interrogations"]:
-
-            st.markdown(
-                f"""
-**🧑 {item['suspect']}**
-
-**Detective:**
-{item['question']}
-
-**Suspect:**
-{item['answer']}
-
----
-"""
-            )
-
-
-# ==================================================
-# FINAL ACCUSATION
-# ==================================================
-
-with tab4:
-
-    st.subheader(
-        "⚖️ Make Your Final Accusation"
-    )
-
-
-    st.warning(
-        "Submitting your accusation "
-        "will end the investigation."
-    )
-
-
-    accusation = st.selectbox(
-
-        "Who is the culprit?",
-
-        suspect_names,
-
-        key="final_suspect"
-    )
-
-
-    reasoning = st.text_area(
-
-        "Explain your reasoning",
-
-        placeholder=(
-            "Explain which clues and "
-            "interrogation responses "
-            "led you to your conclusion..."
-        ),
-
-        height=150
-    )
-
-
-    if st.button(
-
-        "⚖️ SUBMIT ACCUSATION",
-
-        type="primary",
-
-        use_container_width=True
-    ):
-
-        if not reasoning.strip():
-
-            st.warning(
-                "Please explain your reasoning."
-            )
-
-
-        else:
-
-            with st.spinner(
-                "AI Judge is reviewing your investigation..."
-            ):
-
-                judge_result = judge_case(
-
-                    case,
-
-                    accusation,
-
-                    reasoning,
-
-                    clues,
-
-                    game["interrogations"]
-                )
-
-
-            correct = (
-
-                accusation
-                == case["solution"]["culprit"]
-            )
-
-
-            final_score = calculate_score(
-
-                case_name,
-
-                accusation,
-
-                case["solution"]["culprit"],
-
-                game["found_clues"],
-
-                len(clues),
-
-                game["question_count"]
-            )
-
-
-            game["score"] = final_score
-
-
-            finish_game(
-
-                game,
-
-                accusation
-            )
-
-
-            st.session_state.final_result = {
-
-                "judge": judge_result,
-
-                "correct": correct,
-
-                "score": final_score
-            }
-
-
-            st.rerun()
-
-
-# ==================================================
-# FINAL RESULT
-# ==================================================
-
-if st.session_state.final_result:
-
-    result = (
-        st.session_state.final_result
-    )
-
-
-    st.divider()
-
-
-    st.header(
-        "🏁 Investigation Complete"
-    )
-
-
-    if result["correct"]:
-
-        st.success(
-            "🎉 CORRECT! "
-            "You identified the culprit!"
-        )
-
-    else:
-
-        st.error(
-            "❌ INCORRECT! "
-            "The culprit escaped your investigation."
-        )
-
-
-    st.metric(
-        "Final Score",
-        f"{result['score']}/100"
-    )
-
-
-    st.subheader(
-        get_rank(
-            result["score"]
-        )
-    )
-
-
-    st.markdown(
-        result["judge"]
-    )
-
-
-    st.divider()
-
-
-    st.subheader(
-        "🤖 HUMAN VS AI"
-    )
-
-
-    comparison = compare_with_ai(
-
-        result["score"]
-    )
-
-
-    if comparison["result"] == "human":
-
-        st.success(
-            comparison["message"]
-        )
-
-    elif comparison["result"] == "ai":
-
-        st.error(
-            comparison["message"]
-        )
-
-    else:
-
-        st.info(
-            comparison["message"]
-        )
-
-
-    st.divider()
-
-
-    st.subheader(
-        "🔐 Actual Solution"
-    )
-
-
-    st.markdown(
-        reveal_solution(case)
-    )
+    if ai_client is None:
+        st.caption("💡 Add a GEMINI_API_KEY to .env to ask suspects your own questions.")

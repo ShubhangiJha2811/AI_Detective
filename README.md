@@ -1,131 +1,53 @@
-# 🕵️ AI Detective — Human vs Machine
+# 🕵️ AI Detective
 
-AI Detective is an interactive mystery-solving game powered by AI.
+A quick mystery game: find the culprit before you run out of moves.
 
-The player investigates mysterious cases, discovers clues,
-interrogates suspects and finally identifies the culprit.
+## How to play
 
-## Features
+1. Pick a case.
+2. You have **6 moves**. Each move lets you:
+   - 🔎 **Examine** one piece of evidence, or
+   - 🎤 **Ask** a suspect one question (*Where were you? / Why would you do it? / What are you hiding?*)
+3. Find the suspect whose story doesn't match the evidence. Watch out for red herrings!
+4. 👉 **Accuse** the culprit. You get 2 tries.
 
-- 🕵️ Detective cases
-- 👥 Multiple suspects
-- 🔎 Evidence investigation
-- 🎤 AI-powered interrogation
-- 🤖 AI Detective Assistant
-- 💡 AI hints
-- ⚖️ AI Judge
-- ⭐ Scoring system
-- 🏆 Detective rankings
-- 🤖 Human vs AI comparison
-- 🎮 Streamlit interface
+Earn up to ⭐⭐⭐:
+- ⭐ Solve the case
+- ⭐ No wrong accusations
+- ⭐ Finish with 2+ moves left over
 
-## Technologies
+## AI feature (optional)
 
-- Python
-- Streamlit
-- Google Gemini API
-- python-dotenv
-
-## Project Structure
-
-AI_Detective/
-
-├── ai/
-
-│   ├── __init__.py
-
-│   ├── detective_ai.py
-
-│   ├── interrogation.py
-
-│   └── judge.py
-
-├── assets/
-
-│   └── game/
-
-├── game/
-
-│   ├── __init__.py
-
-│   ├── cases.py
-
-│   ├── clues.py
-
-│   ├── game_logic.py
-
-│   ├── scoring.py
-
-│   └── suspects.py
-
-├── .env
-
-├── app.py
-
-├── README.md
-
-└── requirements.txt
-
-## Installation
-
-Create a virtual environment:
-
-python -m venv .venv
-
-Activate it on Windows:
-
-.venv\Scripts\activate
-
-Install dependencies:
-
-pip install -r requirements.txt
-
-## Environment Variables
+The game works without an API key. With a Gemini key, you can also type
+your own questions, and the suspects answer in character (each costs 1 move).
 
 Create a `.env` file:
 
+```
 GEMINI_API_KEY=YOUR_GEMINI_API_KEY
-
 GEMINI_MODEL=gemini-2.5-flash
+```
 
 ## Run
 
-Run the application using:
-
+```
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
 streamlit run app.py
+```
 
-## Game Flow
+## Project structure
 
-Select Case
-↓
-Read Case
-↓
-Study Suspects
-↓
-Investigate Clues
-↓
-Interrogate Suspects
-↓
-Ask AI Detective
-↓
-Make Accusation
-↓
-AI Judge
-↓
-Calculate Score
-↓
-Human vs AI
+```
+app.py               # The whole game screen
+game/cases.py        # Cases, evidence, suspects and their answers
+ai/detective_ai.py   # Gemini client
+ai/interrogation.py  # AI answers to free-text questions
+.streamlit/config.toml
+```
 
-## Future Features
+## Adding a case
 
-- Character images
-- Case background images
-- Sound effects
-- Background music
-- Timer
-- Difficulty levels
-- More cases
-- Leaderboard
-- Multiplayer mode
-- AI-generated cases
-- Voice interrogation
+Add an entry to `CASES` in `game/cases.py` with a story, 4 clues,
+4 suspects (with answers to the 3 questions), the culprit, and a confession.
